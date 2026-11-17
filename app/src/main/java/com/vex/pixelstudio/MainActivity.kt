@@ -73,7 +73,20 @@ private fun PixelStudio() {
     var busy by remember { mutableStateOf(false) }
     var percent by remember { mutableIntStateOf(0) }
     var status by remember { mutableStateOf("Ready") }
-    val pixels = remember(size) { mutableStateListOf<Int>().apply { repeat(size * size) { add(0) } } }
+    val pixels = remember { mutableStateListOf<Int>().apply { repeat(32 * 32) { add(0) } } }
+    fun resizeCanvas(newSize: Int) {
+        if (newSize == size) return
+        val oldSize = size
+        val copy = pixels.toIntArray()
+        val newPixels = IntArray(newSize * newSize) { i ->
+            val x = i % newSize
+            val y = i / newSize
+            if (x < oldSize && y < oldSize) copy[y * oldSize + x] else 0
+        }
+        pixels.clear()
+        pixels.addAll(newPixels.toList())
+        size = newSize
+    }
     val palette = listOf(Color.Black, Color.White, violet, Color(0xFFEB9445), Color(0xFF369E87), Color(0xFFF1CE57), Color(0xFFDF5974))
     val importModel = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -158,7 +171,7 @@ private fun PixelStudio() {
                                 }
                             }
                             result.onSuccess { image ->
-                                size = 32
+                                resizeCanvas(32)
                                 val out = IntArray(1024)
                                 image.getPixels(out, 0, 32, 0, 0, 32, 32)
                                 out.forEachIndexed { i, value -> pixels[i] = value }
@@ -175,7 +188,7 @@ private fun PixelStudio() {
                     Text("Canvas ${size}×${size} · draw using your finger", color = ink, fontSize = 12.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         listOf(16, 32, 64).forEach { n ->
-                            Button(onClick = { size = n }, shape = RectangleShape, colors = ButtonDefaults.buttonColors(containerColor = if (size == n) violet else ink)) { Text("${n}×${n}") }
+                            Button(onClick = { resizeCanvas(n) }, shape = RectangleShape, colors = ButtonDefaults.buttonColors(containerColor = if (size == n) violet else ink)) { Text("${n}×${n}") }
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
