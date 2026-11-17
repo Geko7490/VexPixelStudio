@@ -33,6 +33,7 @@ class TextSpriteEngine(private val context: Context) {
         seed: Long,
         steps: Int,
         guidance: Float,
+        preview: suspend (Bitmap) -> Unit = {},
         progress: suspend (Int) -> Unit
     ): Bitmap = withContext(Dispatchers.Default) {
         require(store.isInstalled(modelId)) { "Import a verified ONNX model bundle first" }
@@ -132,6 +133,16 @@ class TextSpriteEngine(private val context: Context) {
                             timestep.close()
                         }
                         progress(((step + 1) * 100) / steps)
+                        // Genuine sampler snapshots, not a replayed drawing animation.
+                        if (step == steps - 1 || step % (steps / 8).coerceAtLeast(1) == 0) {
+                            val area = res * res
+                            val colors = IntArray(area) { i ->
+                                fun color(c: Int): Int = ((latent[c * area + i].coerceIn(-1f, 1f) + 1f)
+                                    * 127.5f).roundToInt().coerceIn(0, 255)
+                                (0xff shl 24) or (color(0) shl 16) or (color(1) shl 8) or color(2)
+                            }
+                            preview(Bitmap.createBitmap(colors, res, res, Bitmap.Config.ARGB_8888))
+                        }
                     }
                 } finally {
                     ctxTensor.close()
