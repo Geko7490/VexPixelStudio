@@ -24,4 +24,5 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 }
