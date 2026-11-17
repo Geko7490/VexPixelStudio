@@ -31,6 +31,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -53,6 +55,12 @@ private fun PixelStudio() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val engine = remember { SpriteInference(context) }
+    val modelManager = remember { ModelManager(context) }
+    var activeModel by remember { mutableStateOf(modelManager.activeId) }
+    var downloadingId by remember { mutableStateOf<String?>(null) }
+    var downloadedBytes by remember { mutableLongStateOf(0L) }
+    var downloadTotal by remember { mutableLongStateOf(-1L) }
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
     var tab by remember { mutableStateOf("GENERATE") }
     var prompt by remember { mutableStateOf("") }
     var category by remember { mutableIntStateOf(0) }
@@ -109,14 +117,14 @@ private fun PixelStudio() {
                 Text("LOCAL", color = Color(0xFFCBB8FF), fontSize = 11.sp)
             }
             Row(Modifier.fillMaxWidth().background(ink)) {
-                listOf("GENERATE", "EDITOR").forEach { item ->
+                listOf("GENERATE", "EDITOR", "MODELS").forEach { item ->
                     Box(Modifier.weight(1f).background(if (tab == item) violet else ink).clickable { tab = item }.padding(13.dp), contentAlignment = Alignment.Center) {
                         Text(item, color = Color.White, fontSize = 12.sp)
                     }
                 }
             }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (tab == "GENERATE") "AI SPRITE GENERATOR" else "PIXEL EDITOR", fontSize = 23.sp, color = ink)
+                Text(when(tab) { "GENERATE" -> "AI SPRITE GENERATOR"; "EDITOR" -> "PIXEL EDITOR"; else -> "MODEL MANAGER" }, fontSize = 23.sp, color = ink)
                 if (tab == "GENERATE") {
                     Text("REAL ON-DEVICE DIFFUSION · 32×32", fontSize = 11.sp, color = violet)
                     OutlinedTextField(prompt, { prompt = it }, label = { Text("Notes (category model does not read free text)") }, modifier = Modifier.fillMaxWidth(), shape = RectangleShape, maxLines = 2)
@@ -162,8 +170,8 @@ private fun PixelStudio() {
                     }, shape = RectangleShape, enabled = !busy && installed, modifier = Modifier.fillMaxWidth()) {
                         Text(if (busy) "PROCESSING $percent%" else "GENERATE REAL SPRITE")
                     }
-                    if (!installed) Text("Download sprite-150k.onnx from Cyronius/sprite-diffusion on Hugging Face and import it once. Generation works offline afterward.", fontSize = 12.sp, color = ink)
-                } else {
+                    if (!installed) Text("Open MODELS to download the actual ONNX weights, or import a local model below. No image is fabricated.", fontSize = 12.sp, color = ink)
+                } else if (tab == "EDITOR") {
                     Text("Canvas ${size}×${size} · draw using your finger", color = ink, fontSize = 12.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         listOf(16, 32, 64).forEach { n ->
@@ -181,6 +189,75 @@ private fun PixelStudio() {
                         }
                     }
                 }
+                if (tab == "MODELS") {
+                    Text("Download real models once. Generation runs on device after installation.", fontSize = 13.sp, color = ink)
+                    ModelCatalog.models.forEach { model ->
+                        Column(
+                            Modifier.fillMaxWidth().border(1.dp, ink).background(Color.White).padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(model.title.uppercase(), fontSize = 16.sp, color = ink)
+                            Text(model.note, fontSize = 12.sp, color = Color.DarkGray)
+                            if (model.url == null) {
+                                Text("NOT AVAILABLE FOR ANDROID — ONNX PORT REQUIRED", color = Color(0xFF9D5529), fontSize = 11.sp)
+                            } else {
+                                val isInstalled = modelManager.installed(model.id)
+                                val selected = activeModel == model.id && isInstalled
+                                Text(when {
+                                    downloadingId == model.id -> "DOWNLOADING"
+                                    selected -> "INSTALLED · ACTIVE"
+                                    isInstalled -> "INSTALLED"
+                                    else -> "NOT INSTALLED"
+                                }, color = violet, fontSize = 11.sp)
+                                if (downloadingId == model.id) {
+                                    val p = if (downloadTotal > 0) (downloadedBytes.toFloat() / downloadTotal).coerceIn(0f, 1f) else 0f
+                                    LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
+                                    Text(if (downloadTotal > 0) "${downloadedBytes / 1048576} / ${downloadTotal / 1048576} MB" else "${downloadedBytes / 1048576} MB", fontSize = 12.sp)
+                                    Button(onClick = { downloadJob?.cancel() }, shape = RectangleShape) { Text("CANCEL") }
+                                } else if (!isInstalled) {
+                                    Button(onClick = {
+                                        downloadingId = model.id
+                                        downloadedBytes = 0L
+                                        downloadTotal = -1L
+                                        downloadJob = scope.launch {
+                                            try {
+                                                modelManager.download(model.id) { bytes, total ->
+                                                    withContext(Dispatchers.Main) {
+                                                        downloadedBytes = bytes
+                                                        downloadTotal = total
+                                                    }
+                                                }
+                                                activeModel = modelManager.activeId
+                                                installed = engine.installed()
+                                                status = "${model.title} installed and ready"
+                                            } catch (e: CancellationException) {
+                                                status = "Download paused"
+                                            } catch (e: Exception) {
+                                                status = "Model download failed: ${e.message}"
+                                            } finally { downloadingId = null }
+                                        }
+                                    }, enabled = downloadingId == null && !busy, shape = RectangleShape) { Text("DOWNLOAD") }
+                                } else {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Button(onClick = {
+                                            modelManager.select(model.id)
+                                            activeModel = model.id
+                                            installed = engine.installed()
+                                            status = "${model.title} selected"
+                                        }, enabled = !selected && downloadingId == null && !busy, shape = RectangleShape) { Text(if (selected) "ACTIVE" else "USE MODEL") }
+                                        OutlinedButton(onClick = {
+                                            modelManager.delete(model.id)
+                                            activeModel = modelManager.activeId
+                                            installed = engine.installed()
+                                            status = "${model.title} removed"
+                                        }, enabled = downloadingId == null && !busy, shape = RectangleShape) { Text("DELETE") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (tab != "MODELS") {
                 BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(1f).background(Color.White).border(1.dp, ink)) {
                     val canvasWidth = constraints.maxWidth.toFloat()
                     val canvasHeight = constraints.maxHeight.toFloat()
@@ -203,6 +280,7 @@ private fun PixelStudio() {
                     }
                 }
                 Button(onClick = { export.launch("vex-pixel-${System.currentTimeMillis()}.png") }, shape = RectangleShape, modifier = Modifier.fillMaxWidth()) { Text("EXPORT PNG") }
+                }
                 Text(status, fontSize = 12.sp, color = ink)
                 Spacer(Modifier.height(12.dp))
             }
