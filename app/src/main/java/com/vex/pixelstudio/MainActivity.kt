@@ -58,6 +58,9 @@ private fun PixelStudio() {
     val textEngine = remember { TextSpriteEngine(context) }
     val bundleStore = remember { TextBundleStore(context) }
     var mode by remember { mutableStateOf("FAST 32") }
+    var guidance by remember { mutableFloatStateOf(5f) }
+    var livePreview by remember { mutableStateOf(true) }
+    var generationJob by remember { mutableStateOf<Job?>(null) }
     var bundleToImport by remember { mutableStateOf("ptah32") }
     var installedBundlesVersion by remember { mutableIntStateOf(0) }
     val modelManager = remember { ModelManager(context) }
@@ -196,6 +199,15 @@ private fun PixelStudio() {
                         }
                     }
                     OutlinedTextField(seed, { seed = it }, label = { Text("Seed (integer)") }, shape = RectangleShape, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    if (mode != "FAST 32") {
+                        Text("GUIDANCE · " + "%.1f".format(guidance), color = ink, fontSize = 12.sp)
+                        Slider(value = guidance, onValueChange = { guidance = it },
+                            valueRange = 1f..8f, steps = 13, modifier = Modifier.fillMaxWidth())
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = livePreview, onCheckedChange = { livePreview = it })
+                            Text("LIVE SAMPLING PREVIEW", color = ink, fontSize = 12.sp)
+                        }
+                    }
                     if (mode == "FAST 32" && !installed) {
                         Button(onClick = { tab = "MODELS" }, shape = RectangleShape,
                             modifier = Modifier.fillMaxWidth()) { Text("SET UP FAST MODEL") }
@@ -215,7 +227,7 @@ private fun PixelStudio() {
                     Button(onClick = {
                         busy = true
                         percent = 0
-                        scope.launch {
+                        generationJob = scope.launch {
                             val result = runCatching {
                                 if (mode == "FAST 32") {
                                     withContext(Dispatchers.Default) {
@@ -226,7 +238,18 @@ private fun PixelStudio() {
                                 } else {
                                     val bundleId = if (mode == "PROMPT 32") "ptah32" else "spritegpt64"
                                     textEngine.generate(bundleId, prompt, seed.toLongOrNull() ?: 0L,
-                                        steps, if (mode == "PROMPT 32") 5f else 5f) { p ->
+                                        steps, guidance, preview = { bitmap ->
+                                            if (livePreview) {
+                                                withContext(Dispatchers.Main) {
+                                                    resizeCanvas(bitmap.width)
+                                                    val frame = IntArray(bitmap.width * bitmap.height)
+                                                    bitmap.getPixels(frame, 0, bitmap.width, 0, 0,
+                                                        bitmap.width, bitmap.height)
+                                                    frame.forEachIndexed { i, value -> pixels[i] = value }
+                                                }
+                                            }
+                                            bitmap.recycle()
+                                        }) { p ->
                                         withContext(Dispatchers.Main) { percent = p }
                                     }
                                 }
@@ -248,6 +271,11 @@ private fun PixelStudio() {
                             bundleStore.isInstalled(if (mode == "PROMPT 32") "ptah32" else "spritegpt64") && prompt.isNotBlank()),
                         modifier = Modifier.fillMaxWidth()) {
                         Text(if (busy) "GENERATING " + percent + "%" else "GENERATE REAL SPRITE")
+                    }
+                    if (busy && generationJob != null) {
+                        LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth())
+                        OutlinedButton(onClick = { generationJob?.cancel() }, shape = RectangleShape,
+                            modifier = Modifier.fillMaxWidth()) { Text("CANCEL GENERATION") }
                     }
                     if (mode == "FAST 32" && !installed) Text("Fast mode requires the existing category model. Download it from MODELS.", fontSize = 12.sp, color = ink)
                 } else if (tab == "EDITOR") {
