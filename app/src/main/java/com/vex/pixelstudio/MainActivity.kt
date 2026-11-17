@@ -283,17 +283,60 @@ private fun PixelStudio() {
                             Text(if (built) "VERIFIED BUNDLE INSTALLED" else
                                 "Requires exported generator + CLIP + tokenizer bundle. Not a raw .pt model.",
                                 fontSize = 11.sp, color = if (built) violet else Color(0xFF9D5529))
-                            if (!built) Button(onClick = {
-                                bundleToImport = id
-                                importBundle.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
-                            }, enabled = !busy, shape = RectangleShape, modifier = Modifier.fillMaxWidth()) {
-                                Text("IMPORT VERIFIED ONNX ZIP")
+                            if (downloadingId == id) {
+                                val fraction = if (downloadTotal > 0L)
+                                    (downloadedBytes.toFloat() / downloadTotal.toFloat()).coerceIn(0f, 1f) else 0f
+                                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+                                Text(if (downloadTotal > 0L)
+                                    (downloadedBytes / 1048576).toString() + " / " +
+                                        (downloadTotal / 1048576).toString() + " MB"
+                                    else (downloadedBytes / 1048576).toString() + " MB",
+                                    fontSize = 12.sp, color = ink)
+                                OutlinedButton(onClick = { downloadJob?.cancel() }, shape = RectangleShape) {
+                                    Text("CANCEL DOWNLOAD")
+                                }
+                            } else if (!built) {
+                                Button(onClick = {
+                                    downloadingId = id
+                                    downloadedBytes = 0L
+                                    downloadTotal = -1L
+                                    downloadJob = scope.launch {
+                                        try {
+                                            bundleStore.downloadAndInstall(id) { bytes, total ->
+                                                withContext(Dispatchers.Main) {
+                                                    downloadedBytes = bytes
+                                                    downloadTotal = total
+                                                }
+                                            }
+                                            installedBundlesVersion++
+                                            status = id + " installed and verified"
+                                        } catch (e: CancellationException) {
+                                            status = "Download paused"
+                                        } catch (e: Exception) {
+                                            status = "Text model installation failed: " + (e.message ?: "Unknown error")
+                                        } finally {
+                                            downloadingId = null
+                                        }
+                                    }
+                                }, enabled = !busy && downloadingId == null, shape = RectangleShape,
+                                    modifier = Modifier.fillMaxWidth()) {
+                                    Text("DOWNLOAD MODEL")
+                                }
+                                OutlinedButton(onClick = {
+                                    bundleToImport = id
+                                    importBundle.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                                }, enabled = !busy && downloadingId == null, shape = RectangleShape,
+                                    modifier = Modifier.fillMaxWidth()) {
+                                    Text("IMPORT VERIFIED ONNX ZIP")
+                                }
                             } else {
                                 Button(onClick = {
                                     bundleStore.delete(id)
                                     installedBundlesVersion++
                                     status = id + " removed"
-                                }, enabled = !busy, shape = RectangleShape) { Text("DELETE BUNDLE") }
+                                }, enabled = !busy && downloadingId == null, shape = RectangleShape) {
+                                    Text("DELETE BUNDLE")
+                                }
                             }
                         }
                     }
