@@ -6,7 +6,6 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -124,12 +123,31 @@ class ModelManager(private val context: Context) {
                 var bytes = if (resume) existing else 0L
                 try {
                     connection.inputStream.use { input ->
-                        temp.outputStream().buffered().use { out ->
-                            // outputStream truncates, so a resumed transfer must append.
+                        java.io.FileOutputStream(temp, resume).buffered().use { out ->
+                            val buffer = ByteArray(256 * 1024)
+                            var lastReported = bytes
+                            while (true) {
+                                coroutineContext.ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                out.write(buffer, 0, count)
+                                bytes += count
+                                if (bytes - lastReported > 512 * 1024 || (total > 0 && bytes == total)) {
+                                    progress(bytes, total)
+                                    lastReported = bytes
+                                }
+                            }
+                            out.flush()
                         }
                     }
                 } finally { connection.disconnect() }
-            } finally { /* A resumable .part file remains on failure. */ }
+                require(bytes > 1024L * 1024L) { "Downloaded file is too small" }
+                if (total > 0) require(bytes == total) { "Download truncated: $bytes / $total" }
+                validate32(temp)
+                moveIntoPlace(temp, pathFor(id))
+                prefs.edit().putString("active_model", id).apply()
+                progress(bytes, total)
+            } finally { /* An interrupted .part file is safe to resume. */ }
         }
     }
 
