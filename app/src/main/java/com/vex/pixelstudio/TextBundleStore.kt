@@ -4,6 +4,14 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import java.io.InputStream
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.coroutines.coroutineContext
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
@@ -45,13 +53,80 @@ class TextBundleStore(private val context: Context) {
     }
 
     fun installZip(uri: Uri, expectedId: String) {
+        context.contentResolver.openInputStream(uri)?.use { installStream(it, expectedId) }
+            ?: error("Unable to open ZIP file")
+    }
+
+    /**
+     * Downloads directly from this project's release assets and installs after all
+     * model files pass SHA-256 + graph validation. Works offline after installation.
+     */
+    suspend fun downloadAndInstall(id: String, progress: suspend (Long, Long) -> Unit) {
+        require(id in modelIds) { "Unsupported model" }
+        val release = "https://github.com/Geko7490/VexPixelStudio/releases/download/models-v0.3/"
+        val url = release + id + "-bundle.zip"
+        withContext(Dispatchers.IO) {
+            val partial = File(base, id + ".zip.part")
+            try {
+                val previous = if (partial.exists()) partial.length() else 0L
+                var connection = URL(url).openConnection() as HttpURLConnection
+                connection.connectTimeout = 20_000
+                connection.readTimeout = 60_000
+                connection.instanceFollowRedirects = true
+                connection.setRequestProperty("User-Agent", "VexPixelStudio/0.3")
+                if (previous > 0) connection.setRequestProperty("Range", "bytes=" + previous + "-")
+                var response = connection.responseCode
+                var redirects = 0
+                while (response in 300..399) {
+                    require(redirects++ < 6) { "Too many download redirects" }
+                    val next = connection.getHeaderField("Location") ?: error("Missing download redirect URL")
+                    require(URL(next).protocol == "https") { "Unsafe model download redirect" }
+                    connection.disconnect()
+                    connection = URL(next).openConnection() as HttpURLConnection
+                    connection.instanceFollowRedirects = true
+                    connection.connectTimeout = 20_000
+                    connection.readTimeout = 60_000
+                    if (previous > 0) connection.setRequestProperty("Range", "bytes=" + previous + "-")
+                    response = connection.responseCode
+                }
+                require(response == 200 || response == 206) { "Model server HTTP " + response }
+                val resume = response == 206 && previous > 0
+                val contentLength = connection.contentLengthLong
+                val total = if (contentLength > 0) contentLength + if (resume) previous else 0 else -1L
+                var transferred = if (resume) previous else 0L
+                try {
+                    connection.inputStream.use { input ->
+                        FileOutputStream(partial, resume).buffered().use { output ->
+                            val buffer = ByteArray(256 * 1024)
+                            while (true) {
+                                coroutineContext.ensureActive()
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                transferred += read
+                                require(transferred < 1_000_000_000L) { "Model download too large" }
+                                output.write(buffer, 0, read)
+                                progress(transferred, total)
+                            }
+                        }
+                    }
+                } finally { connection.disconnect() }
+                require(total <= 0 || transferred == total) { "Incomplete model download" }
+                partial.inputStream().use { installStream(it, id) }
+                partial.delete()
+            } catch (e: Exception) {
+                // Preserve the partial download so a supported Range request can resume.
+                throw e
+            }
+        }
+    }
+
+    private fun installStream(source: InputStream, expectedId: String) {
         require(expectedId in modelIds)
         val staging = File(base, expectedId + ".installing")
         if (staging.exists()) staging.deleteRecursively()
         check(staging.mkdirs()) { "Cannot create staging directory" }
         try {
-            context.contentResolver.openInputStream(uri)?.use { source ->
-                ZipInputStream(source.buffered()).use { zip ->
+            ZipInputStream(source.buffered()).use { zip ->
                     var entry = zip.nextEntry
                     var totalBytes = 0L
                     while (entry != null) {
@@ -73,7 +148,6 @@ class TextBundleStore(private val context: Context) {
                         entry = zip.nextEntry
                     }
                 }
-            } ?: error("Unable to open ZIP file")
             require(allowed.all { File(staging, it).isFile }) { "Missing model bundle files" }
             val manifest = JSONObject(File(staging, "manifest.json").readText())
             require(manifest.getString("model_id") == expectedId) { "Wrong model bundle" }
@@ -82,7 +156,7 @@ class TextBundleStore(private val context: Context) {
             require(manifest.getInt("resolution") == resolution && manifest.getString("sampler") == sampler) {
                 "Incompatible model metadata"
             }
-            require(manifest.getInt("max_tokens") == if (resolution == 32) 24 else 32)
+            require(manifest.getInt("max_tokens") == (if (resolution == 32) 24 else 32))
             val hashes = manifest.getJSONObject("sha256")
             for (name in listOf("generator.onnx", "clip.onnx", "vocab.json", "merges.txt")) {
                 val expected = hashes.getString(name).lowercase()
