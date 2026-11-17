@@ -1,22 +1,26 @@
 # VEX Pixel Studio
 
-Native Android pixel art studio. **English-only UI, sharp square corners, offline-first.**
+Native Android pixel art editor with **real local 32×32 AI diffusion inference** (ONNX Runtime). English-only UI, square controls and sharp corners.
 
-## Current state
-- Kotlin + Jetpack Compose Android shell
-- Generate / Editor / Projects navigation
-- 16×16, 32×32, 64×64 transparent pixel grid preview
-- Palette swatches and prompt input
-- AI generation deliberately disabled until a real model is integrated
+## Features implemented in source
+- Manual pixel painting and erasing on 16×16, 32×32, 64×64 grids
+- Palette picker and clear canvas
+- Transparent PNG export using Android Storage Access Framework
+- Category-conditioned 32×32 sprite generation: seed, category, 8/16/32 steps, actual ONNX runtime sampling, progress indicator
+- Import a supported ONNX model from the phone. No network permission needed.
+- GitHub Actions workflow building a debug APK artifact on pushes
 
-**Important:** This commit does not contain a trained AI model, ONNX inference, functioning pixel drawing gestures, export, or persistence. No mock AI generations are shown.
+## Important limitations
+- Import a real **sprite-150k.onnx** model before using Generate. The model is not bundled.
+- The Notes input does not control this category-only model; it is intentionally labeled.
+- Text-conditioned **64×64 generation is not yet implemented**; the 64×64 canvas is manual editing.
+- Project persistence, undo/redo and layer editing are not yet implemented.
+- APK build and hardware inference are pending verification. Do not represent this code as device-tested.
 
-## Next development steps
-1. Verify real 64×64 model weights, license and inference procedure.
-2. Convert to ONNX or choose a verified Android-compatible inference backend.
-3. Implement actual sampler, model installation and progress reporting.
-4. Implement touch drawing, undo/redo, PNG export and project persistence.
-5. Add GitHub Actions Android APK build and test on a physical device.
+Read [MODEL_SETUP.md](MODEL_SETUP.md) for verified model source and instructions.
 
-## Build
-Use JDK 17 and Android SDK 35, then run `gradle :app:assembleDebug` with a compatible Gradle installation.
+## GitHub Actions
+Open Actions > Android Debug APK > latest successful run > **VexPixelStudio-debug** artifact. The ZIP contains the debug APK.
+
+## License
+Model is maintained by its respective author; see Hugging Face model card for license. Model weights are not included in this repository.
