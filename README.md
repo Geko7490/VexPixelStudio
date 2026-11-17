@@ -1,42 +1,49 @@
 # VEX Pixel Studio
 
-Native, English-language Android pixel art editor with **sharp square controls**.
+**Native Android pixel-art studio — English interface, sharp square corners.**
 
-## Added on 2026-11-17
+## v0.3.1 — Real offline prompt generation
 
-- In-app **Models** screen with direct HTTPS downloads from the published Hugging Face repository
-- Select/download/delete **Sprite Diffusion 150k** and **Sprite Diffusion 100k** ONNX checkpoints
-- Byte-based download progress, cancel, and resumable `.part` file handling
-- ONNX graph validation before a download becomes an installed model
-- Select active 32×32 model without reinstalling the app
-- Generate genuine 32×32 RGBA sprites via local ONNX Runtime; no generated sprite templates
-- English UI, sharp-edged controls; manual 16×16/32×32/64×64 pixel editor
-- PNG export through Android's file picker, and manual ONNX import
-- GitHub Actions debug APK build on push
+Three distinct generation modes are implemented:
 
-### App model setup
+- **FAST 32** — Sprite Diffusion, an 8-category, 32×32 RGBA ONNX model (no natural-language prompt support).
+- **PROMPT 32** — PtahX32, true 32×32 text-conditioned diffusion with CLIP, DDIM sampler and adjustable guidance.
+- **PROMPT 64** — Sprite-GPT Text64, true 64×64 text-conditioned rectified-flow sampling with CLIP cross-attention.
 
-1. Install debug APK from the first **successful** Android Debug APK GitHub Actions run.
-2. Tap **MODELS**, then **DOWNLOAD** beside Sprite Diffusion 150k (or 100k).
-3. Let the app validate and install the model. Downloaded weights are held in app-private storage.
-4. On **GENERATE**, choose a category and seed, then press **GENERATE REAL SPRITE**.
-5. After installation, generation does not use the network.
+**Every generated image comes from neural model inference on the phone. No static sprite bank is substituted.**
+Both text-model generator weights and CLIP models were converted from upstream author checkpoints and passed PyTorch/ONNX parity checks in [this CI run](https://github.com/Geko7490/VexPixelStudio/actions/runs/44084764455). Their output is RGB on a light background, not real alpha; the manual editor and fast model support transparency.
 
-The app requires Internet **only for model downloads**. Downloading model files from Hugging Face may require several hundred megabytes of traffic.
+### Install APK and models
 
-### Important 64×64 limitation
+1. Download **VexPixelStudio-debug** from the latest successful [Android Debug APK](https://github.com/Geko7490/VexPixelStudio/actions).
+2. Open **MODELS**, then download PtahX32 (about 345 MB) or Sprite-GPT Text64 (about 420 MB). Both downloads are hosted as official assets in [models-v0.3](https://github.com/Geko7490/VexPixelStudio/releases/tag/models-v0.3).
+3. Wait for the ONNX graph and SHA-256 validation to complete.
+4. On **GENERATE**, choose **PROMPT 32** or **PROMPT 64**. Enter a short English description, set guidance and steps, and use genuine intermediate-sampler previews.
+5. Export PNG or edit the generated pixels. Generation works entirely offline once the model is installed.
 
-**64×64 manual editing is present**, but genuine 64×64 AI generation is **not yet functional**. The 64×64 Sprite-GPT options are listed as unavailable to avoid implying otherwise. Upstream publishes class-conditioned and CLIP text-conditioned PyTorch `.pt` checkpoints, not ready-to-use Android ONNX inference packages. These models cannot be passed to the existing 32×32 ONNX sampler unchanged. We must export/validate a compatible generator and (for text) CLIP tokenizer/encoder before making a working download button.
+The model manager supports pause-by-cancel and partial-download resume when the server honors HTTP Range. Alternatively, import the single `ptah32-bundle.zip` or `spritegpt64-bundle.zip` file from your phone. **Do not import the outer GitHub Actions artifact ZIP**; extract its bundle ZIP first.
 
-32×32 Sprite Diffusion accepts category labels rather than natural-language prompt control. The Notes field is not used by the model.
+### Development tools
 
-### Quality and test status
+- `tools/export_text_bundles.py`: exports both real text-model generators and CLIP text encoders as ONNX, verifies ONNX/PyTorch parity, writes SHA-256 manifest and ZIP bundle
+- `.github/workflows/build-text-models.yml`: produces validated model artifacts
+- `.github/workflows/publish-models.yml`: publishes the verified bundles
+- `TextSpriteEngine.kt`: local Android DDIM and Euler CFG samplers
+- `ClipBpeTokenizer.kt`: offline CLIP byte-level BPE tokenizer
+- `TextBundleStore.kt`: secure model package downloader/installer
 
-Source commits have been pushed through the connected GitHub app. **No confirmed successful Android build or physical-device inference test is claimed in this README.** Test an APK before using it as a production release.
+### Limitations
 
-### Sources & licensing
+- **Real Android inference performance, visual quality and memory use require physical-device testing.** A successful APK build and ONNX parity on desktop do not certify successful phone generation.
+- PtahX32 and Sprite-GPT64 produce **RGB**, not native transparent backgrounds; cleanup/transparency tooling is not yet complete.
+- Large downloads and inference can consume storage, RAM, battery and time.
+- Save-project history, multilayer editor, undo/redo and image-to-animation export are not yet complete.
 
-- https://huggingface.co/Cyronius/sprite-diffusion — Apache-2.0 model.
-- https://huggingface.co/gmmeyer/sprite-gpt — CC-BY-SA-4.0. 64×64 reference model only at present.
+### Attribution
 
-Neither model checkpoint is committed to this Git repository.
+- Sprite Diffusion: https://huggingface.co/Cyronius/sprite-diffusion — Apache-2.0
+- PtahX32: https://huggingface.co/viknesh100/PtahX32 — MIT checkpoint, review training data terms separately
+- Sprite-GPT: https://huggingface.co/gmmeyer/sprite-gpt — CC-BY-SA-4.0
+- CLIP text encoder: https://huggingface.co/openai/clip-vit-base-patch32 — MIT
+
+These are third-party models. See the upstream repositories for licensing and attribution.
