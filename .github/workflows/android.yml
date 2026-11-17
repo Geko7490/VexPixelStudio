@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -36,3 +36,17 @@ jobs:
           name: VexPixelStudio-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Publish directly installable APK
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk VexPixelStudio-v0.3.1-debug.apk
+          if ! gh release view v0.3.1-debug --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create v0.3.1-debug --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "VEX Pixel Studio v0.3.1 (debug APK)" \
+              --notes "Android build for offline Prompt32 and Prompt64. Install models within the app. Debug build; performance and inference on real phones are not yet certified." \
+              --prerelease --latest=false
+          fi
+          gh release upload v0.3.1-debug VexPixelStudio-v0.3.1-debug.apk --clobber --repo "$GITHUB_REPOSITORY"
