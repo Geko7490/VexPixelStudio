@@ -46,7 +46,7 @@ class TextSpriteEngine(private val context: Context) {
         val tokenizer = ClipBpeTokenizer(dir)
         val texts = listOf("", prompt).map { tokenizer.encode(it, maxTokens) }
         val ids = LongArray(2 * maxTokens) { i -> texts[i / maxTokens].ids[i % maxTokens] }
-        val mask = LongArray(2 * maxTokens) { i -> texts[i / maxTokens].mask[i % maxTokens] }
+        val mask = LongArray(2 * maxTokens) { i -> if (isDdIM) 1L else texts[i / maxTokens].mask[i % maxTokens] }
         val env = OrtEnvironment.getEnvironment()
         val options = OrtSession.SessionOptions()
         options.setIntraOpNumThreads(4)
