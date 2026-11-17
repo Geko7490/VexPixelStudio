@@ -1,27 +1,41 @@
-# Set up real offline image generation
+# Install real on-device AI models
 
-The generator performs **actual on-device** 32×32 diffusion. It does not select pre-drawn images.
+## Easiest path: in-app download
 
-1. Open https://huggingface.co/Cyronius/sprite-diffusion/tree/main
-2. Download **sprite-150k.onnx** (or sprite-100k.onnx) to your Android device.
-3. Open VEX Pixel Studio > GENERATE > IMPORT SPRITE-DIFFUSION ONNX and select that file.
-4. Choose one of the eight supported categories, a numeric seed, and 8/16/32 sampling steps.
-5. Press GENERATE REAL SPRITE. The model executes with ONNX Runtime **on your phone**, with no server endpoint and no network permission.
+1. Open VEX Pixel Studio > **MODELS**.
+2. Download **Sprite Diffusion 150k** (or **100k**) from Hugging Face.
+3. See transferred bytes/progress. Tap CANCEL to interrupt; the `.part` file allows the next attempt to resume if the server supports HTTP Range.
+4. The app opens the downloaded ONNX graph and validates the required inputs/output before accepting it.
+5. Tap USE MODEL to switch between installed checkpoints.
+6. Open GENERATE, select one of the 8 categories, choose 8/16/32 steps and a numeric seed.
+7. Generate on-device without any further Internet access.
 
-This model only accepts categories: creature, item, weapon, food, effect, terrain, structure, nature. The Notes field is not passed to the model. Free-text 64×64 Sprite-GPT is **not implemented** yet: the original checkpoint is PyTorch and requires a verified Android pipeline.
+If you already have a compatible 32x32 ONNX file, use **IMPORT SPRITE-DIFFUSION ONNX** instead.
 
-The output is 32×32 RGBA. The 16×16/64×64 selectors only affect the **manual editor**. Generated pixel buffers are editable and can be exported to PNG through Android's Save dialog. The app does not yet persist projects or provide undo/redo.
+## 64x64
 
-If importing a nonmatching ONNX graph, installation fails without pretending a model is installed. Model data is kept in app-private storage and remains available offline.
+A 64×64 pixel editing canvas is included, but **64×64 AI generation isn't ready for users**.
+Sprite-GPT upstream publishes PyTorch checkpoints, not Android-ready ONNX/CLIP. An experimental
+conversion script and GitHub Actions workflow have been added:
 
-## Technical specification
+- Tools: `tools/export_spritegpt64.py`
+- Workflow: **Experimental 64x64 ONNX conversion**
+- Modes: `class64`, `text64`
 
-The inference loop follows the Hugging Face repository's model card: duplicate latent in batch two; category [c,8], footprint [3,3], CFG=3; Euler integration t=1→0 with N steps; transform [-1,1] output to 8-bit RGBA. ONNX model must expose x, t, category, footprint inputs and a velocity output.
+This workflow is a developer conversion/parity-check step only. Its ONNX output is not yet usable
+through the Android generation UI. The text model additionally requires a local CLIP tokenizer and
+encoder, and the 64×64 outputs are RGB over white rather than RGBA.
 
-## Licensing
+## Honest capability limits
 
-Model weights are not committed to this repository. See the model's Apache 2.0 license and attribution requirements at the source.
+32×32 Sprite Diffusion supports 8 category labels, **not open-ended text prompting**.
+The Notes field is not sent to this model. It is not a hidden remote API or a template picker.
+The weights are not bundled in the APK and aren't included in this Git repository.
 
-## Caveats
+Source: https://huggingface.co/Cyronius/sprite-diffusion (Apache-2.0).
+64×64 source: https://huggingface.co/gmmeyer/sprite-gpt (CC-BY-SA-4.0).
 
-No claim of measured inference speed or a successful tested APK until CI and physical-device test are complete.
+### Testing
+
+GitHub Actions must build successfully and a physical Android device must run actual inference
+before this can be described as a verified release. The presence of these files alone isn't proof.
