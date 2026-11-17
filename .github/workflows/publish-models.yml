@@ -1,0 +1,38 @@
+name: Publish validated offline models
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/publish-models.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download previously verified conversion artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p out/ptah32 out/spritegpt64
+          gh run download 44084764455 --repo "$GITHUB_REPOSITORY" --name text-model-ptah32 --dir out/ptah32
+          gh run download 44084764455 --repo "$GITHUB_REPOSITORY" --name text-model-spritegpt64 --dir out/spritegpt64
+          test -s out/ptah32/ptah32-bundle.zip
+          test -s out/spritegpt64/spritegpt64-bundle.zip
+      - name: Create or update model release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view models-v0.3 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create models-v0.3 --repo "$GITHUB_REPOSITORY" \
+              --title "Verified offline ONNX text-to-pixel model bundles" \
+              --notes "Converted from upstream checkpoints and ONNX/PyTorch parity-tested in GitHub Actions run 44084764455. PtahX32 original model license: MIT; source https://huggingface.co/viknesh100/PtahX32 . Sprite-GPT Text64 original model license: CC-BY-SA-4.0; source https://huggingface.co/gmmeyer/sprite-gpt . Bundles include CLIP text encoder from openai/clip-vit-base-patch32 (MIT). Source model attribution and licenses remain applicable. These bundles are an experimental release: real Android inference quality/performance needs a device test." \
+              --latest=false
+          fi
+          gh release upload models-v0.3 out/ptah32/ptah32-bundle.zip out/spritegpt64/spritegpt64-bundle.zip --clobber --repo "$GITHUB_REPOSITORY"
