@@ -55,6 +55,11 @@ private fun PixelStudio() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val engine = remember { SpriteInference(context) }
+    val textEngine = remember { TextSpriteEngine(context) }
+    val bundleStore = remember { TextBundleStore(context) }
+    var mode by remember { mutableStateOf("FAST 32") }
+    var bundleToImport by remember { mutableStateOf("ptah32") }
+    var installedBundlesVersion by remember { mutableIntStateOf(0) }
     val modelManager = remember { ModelManager(context) }
     var activeModel by remember { mutableStateOf(modelManager.activeId) }
     var downloadingId by remember { mutableStateOf<String?>(null) }
@@ -99,6 +104,21 @@ private fun PixelStudio() {
             }
         }
     }
+    val importBundle = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && !busy) {
+            val target = bundleToImport
+            busy = true
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { bundleStore.installZip(uri, target) }
+                }
+                installedBundlesVersion++
+                status = if (result.isSuccess) target + " text model installed" else
+                    "Bundle import failed: " + (result.exceptionOrNull()?.message ?: "Unknown error")
+                busy = false
+            }
+        }
+    }
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
         if (uri != null) {
             val copy = pixels.toIntArray()
@@ -139,8 +159,25 @@ private fun PixelStudio() {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(when(tab) { "GENERATE" -> "AI SPRITE GENERATOR"; "EDITOR" -> "PIXEL EDITOR"; else -> "MODEL MANAGER" }, fontSize = 23.sp, color = ink)
                 if (tab == "GENERATE") {
-                    Text("REAL ON-DEVICE DIFFUSION · 32×32", fontSize = 11.sp, color = violet)
-                    OutlinedTextField(prompt, { prompt = it }, label = { Text("Notes (category model does not read free text)") }, modifier = Modifier.fillMaxWidth(), shape = RectangleShape, maxLines = 2)
+                    Text("OFFLINE ONNX IMAGE GENERATION", fontSize = 11.sp, color = violet)
+                    Text("GENERATION MODE", fontSize = 12.sp, color = ink)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                        listOf("FAST 32", "PROMPT 32", "PROMPT 64").forEach { label ->
+                            Button(onClick = {
+                                mode = label
+                                steps = if (label == "FAST 32") 16 else 50
+                            }, shape = RectangleShape, modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 3.dp, vertical = 6.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = if (mode == label) violet else ink)) {
+                                Text(label, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                    OutlinedTextField(prompt, { prompt = it },
+                        label = { Text(if (mode == "FAST 32") "Notes (Fast mode does not read prompt)" else "English prompt — e.g. a blue bird sprite") },
+                        modifier = Modifier.fillMaxWidth(), shape = RectangleShape, maxLines = 2,
+                        enabled = mode != "FAST 32")
+                    if (mode == "FAST 32") {
                     Text("CATEGORY", fontSize = 12.sp, color = ink)
                     categories.chunked(4).forEach { group ->
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
@@ -152,38 +189,67 @@ private fun PixelStudio() {
                             }
                         }
                     }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        listOf(8, 16, 32).forEach { n ->
+                        (if (mode == "FAST 32") listOf(8, 16, 32) else if (mode == "PROMPT 32") listOf(20, 30, 50) else listOf(20, 35, 50)).forEach { n ->
                             Button(onClick = { steps = n }, shape = RectangleShape, colors = ButtonDefaults.buttonColors(containerColor = if (steps == n) violet else ink)) { Text("$n steps") }
                         }
                     }
                     OutlinedTextField(seed, { seed = it }, label = { Text("Seed (integer)") }, shape = RectangleShape, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    if (!installed) Button(onClick = { importModel.launch(arrayOf("application/octet-stream", "*/*")) }, shape = RectangleShape, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("IMPORT SPRITE-DIFFUSION ONNX") }
+                    if (mode == "FAST 32" && !installed) {
+                        Button(onClick = { tab = "MODELS" }, shape = RectangleShape,
+                            modifier = Modifier.fillMaxWidth()) { Text("SET UP FAST MODEL") }
+                        OutlinedButton(onClick = { importModel.launch(arrayOf("application/octet-stream", "*/*")) },
+                            shape = RectangleShape, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                            Text("IMPORT LOCAL 32×32 ONNX")
+                        }
+                    }
+                    if (mode != "FAST 32") {
+                        val bundleId = if (mode == "PROMPT 32") "ptah32" else "spritegpt64"
+                        val ready = bundleStore.isInstalled(bundleId)
+                        Text(if (ready) "TEXT MODEL READY · FULLY OFFLINE" else "TEXT MODEL NOT INSTALLED — IMPORT A VERIFIED ONNX BUNDLE IN MODELS",
+                            color = if (ready) violet else Color(0xFF9D5529), fontSize = 11.sp)
+                        if (!ready) Button(onClick = { tab = "MODELS" }, shape = RectangleShape,
+                            modifier = Modifier.fillMaxWidth()) { Text("OPEN MODEL MANAGER") }
+                    }
                     Button(onClick = {
                         busy = true
                         percent = 0
                         scope.launch {
-                            val result = withContext(Dispatchers.Default) {
-                                runCatching {
-                                    engine.generate(category, seed.toLongOrNull() ?: 0L, steps) { progress ->
-                                        percent = progress
+                            val result = runCatching {
+                                if (mode == "FAST 32") {
+                                    withContext(Dispatchers.Default) {
+                                        engine.generate(category, seed.toLongOrNull() ?: 0L, steps) { p ->
+                                            percent = p
+                                        }
+                                    }
+                                } else {
+                                    val bundleId = if (mode == "PROMPT 32") "ptah32" else "spritegpt64"
+                                    textEngine.generate(bundleId, prompt, seed.toLongOrNull() ?: 0L,
+                                        steps, if (mode == "PROMPT 32") 5f else 5f) { p ->
+                                        withContext(Dispatchers.Main) { percent = p }
                                     }
                                 }
                             }
                             result.onSuccess { image ->
-                                resizeCanvas(32)
-                                val out = IntArray(1024)
-                                image.getPixels(out, 0, 32, 0, 0, 32, 32)
-                                out.forEachIndexed { i, value -> pixels[i] = value }
+                                resizeCanvas(image.width)
+                                val values = IntArray(image.width * image.height)
+                                image.getPixels(values, 0, image.width, 0, 0, image.width, image.height)
+                                values.forEachIndexed { i, c -> pixels[i] = c }
                                 image.recycle()
-                                status = "Generated 32×32 sprite on device"
-                            }.onFailure { status = "Generation failed: ${it.message}" }
+                                status = "Generated " + size + "×" + size + " sprite on your device"
+                            }.onFailure {
+                                status = "Generation failed: " + (it.message ?: "Unknown error")
+                            }
                             busy = false
                         }
-                    }, shape = RectangleShape, enabled = !busy && installed, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (busy) "PROCESSING $percent%" else "GENERATE REAL SPRITE")
+                    }, shape = RectangleShape,
+                        enabled = !busy && (if (mode == "FAST 32") installed else
+                            bundleStore.isInstalled(if (mode == "PROMPT 32") "ptah32" else "spritegpt64") && prompt.isNotBlank()),
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(if (busy) "GENERATING " + percent + "%" else "GENERATE REAL SPRITE")
                     }
-                    if (!installed) Text("Open MODELS to download the actual ONNX weights, or import a local model below. No image is fabricated.", fontSize = 12.sp, color = ink)
+                    if (mode == "FAST 32" && !installed) Text("Fast mode requires the existing category model. Download it from MODELS.", fontSize = 12.sp, color = ink)
                 } else if (tab == "EDITOR") {
                     Text("Canvas ${size}×${size} · draw using your finger", color = ink, fontSize = 12.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -204,7 +270,37 @@ private fun PixelStudio() {
                 }
                 if (tab == "MODELS") {
                     Text("Download real models once. Generation runs on device after installation.", fontSize = 13.sp, color = ink)
-                    ModelCatalog.models.forEach { model ->
+                    Text("TEXT-TO-SPRITE ONNX BUNDLES", fontSize = 15.sp, color = violet)
+                    listOf("ptah32", "spritegpt64").forEach { id ->
+                        val built = bundleStore.isInstalled(id)
+                        Column(Modifier.fillMaxWidth().border(1.dp, ink).background(Color.White).padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(if (id == "ptah32") "PTAH X32 · ENGLISH PROMPT" else "SPRITE-GPT 64 · ENGLISH PROMPT",
+                                fontSize = 15.sp, color = ink)
+                            Text(if (id == "ptah32") "32×32 · DDIM · MIT model license" else
+                                "64×64 · Euler · CC-BY-SA 4.0 model license",
+                                fontSize = 12.sp, color = Color.DarkGray)
+                            Text(if (built) "VERIFIED BUNDLE INSTALLED" else
+                                "Requires exported generator + CLIP + tokenizer bundle. Not a raw .pt model.",
+                                fontSize = 11.sp, color = if (built) violet else Color(0xFF9D5529))
+                            if (!built) Button(onClick = {
+                                bundleToImport = id
+                                importBundle.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                            }, enabled = !busy, shape = RectangleShape, modifier = Modifier.fillMaxWidth()) {
+                                Text("IMPORT VERIFIED ONNX ZIP")
+                            } else {
+                                Button(onClick = {
+                                    bundleStore.delete(id)
+                                    installedBundlesVersion++
+                                    status = id + " removed"
+                                }, enabled = !busy, shape = RectangleShape) { Text("DELETE BUNDLE") }
+                            }
+                        }
+                    }
+                    Text("Developer ONNX conversion runs: GitHub Actions → Build real text-to-pixel ONNX model bundles.",
+                        fontSize = 11.sp, color = Color.DarkGray)
+                    Text("FAST CATEGORY MODELS", fontSize = 15.sp, color = violet)
+                    ModelCatalog.models.filter { it.resolution == 32 }.forEach { model ->
                         Column(
                             Modifier.fillMaxWidth().border(1.dp, ink).background(Color.White).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
