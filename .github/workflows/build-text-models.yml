@@ -1,0 +1,45 @@
+name: Build real text-to-pixel ONNX model bundles
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-text-models.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  convert:
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [ptah32, spritegpt64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      HF_HUB_ENABLE_HF_TRANSFER: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU-only export dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "torch==2.5.1" --index-url https://download.pytorch.org/whl/cpu
+          pip install "onnx==1.17.0" "onnxruntime==1.20.1" "transformers==4.44.2" "diffusers==0.30.3" "huggingface_hub==0.25.2" "safetensors" "numpy==1.26.4"
+      - name: Fetch official model architecture
+        if: matrix.model == 'spritegpt64'
+        run: git clone --depth 1 https://github.com/gmmeyer/sprite-diffusion.git /tmp/sprite-diffusion
+      - name: Convert and verify against original PyTorch
+        run: python tools/export_text_bundles.py --mode "${{ matrix.model }}"
+      - name: Upload verified bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-model-${{ matrix.model }}
+          path: dist-text-models/${{ matrix.model }}-bundle.zip
+          retention-days: 14
+          if-no-files-found: error
