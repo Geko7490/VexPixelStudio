@@ -92,7 +92,7 @@ class TextBundleStore(private val context: Context) {
                 require(response == 200 || response == 206) { "Model server HTTP " + response }
                 val resume = response == 206 && previous > 0
                 val contentLength = connection.contentLengthLong
-                val total = if (contentLength > 0) contentLength + if (resume) previous else 0 else -1L
+                val total = if (contentLength > 0) contentLength + (if (resume) previous else 0L) else -1L
                 var transferred = if (resume) previous else 0L
                 try {
                     connection.inputStream.use { input ->
