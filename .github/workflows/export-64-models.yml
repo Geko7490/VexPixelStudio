@@ -1,0 +1,42 @@
+name: Experimental 64x64 ONNX conversion
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Class-based or text-based generator'
+        required: true
+        type: choice
+        options:
+          - class64
+          - text64
+
+permissions:
+  contents: read
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install model conversion dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install "onnx>=1.16" "onnxruntime>=1.19" "huggingface_hub>=0.25" "numpy>=1.26,<3"
+      - name: Clone upstream Sprite-GPT architecture
+        run: git clone --depth 1 https://github.com/gmmeyer/sprite-diffusion.git /tmp/sprite-diffusion
+      - name: Export and compare against PyTorch
+        env:
+          PYTHONPATH: /tmp/sprite-diffusion
+        run: python tools/export_spritegpt64.py --mode "${{ inputs.mode }}"
+      - name: Store verified ONNX file
+        uses: actions/upload-artifact@v4
+        with:
+          name: sprite-gpt-${{ inputs.mode }}-onnx
+          path: dist/
+          if-no-files-found: error
