@@ -18,25 +18,11 @@ import kotlin.math.roundToInt
  * The checkpoint has a fixed [2,4,32,32] input and returns velocity.
  */
 class SpriteInference(private val context: Context) {
-    private val modelFile: File get() = File(context.filesDir, "sprite-diffusion.onnx")
+    private val modelFile: File get() = ModelManager(context).activeFile() ?: File(context.filesDir, "models/missing.onnx")
 
     fun installed(): Boolean = modelFile.exists() && modelFile.length() > 1_000_000
 
-    fun importModel(uri: Uri) {
-        val tmp = File(context.filesDir, "sprite-diffusion.tmp")
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                tmp.outputStream().use { output -> input.copyTo(output) }
-            } ?: error("Unable to open model file")
-            require(tmp.length() > 1_000_000) { "Model file is too small" }
-            val env = OrtEnvironment.getEnvironment()
-            env.createSession(tmp.absolutePath, OrtSession.SessionOptions()).use { session ->
-                val names = session.inputNames
-                require(names.containsAll(listOf("x", "t", "category", "footprint"))) { "Wrong model: required Sprite Diffusion inputs not found" }
-            }
-            require(tmp.renameTo(modelFile)) { "Could not install model" }
-        } finally { if (tmp.exists()) tmp.delete() }
-    }
+    fun importModel(uri: Uri) = ModelManager(context).import32(uri)
 
     fun generate(category: Int, seed: Long, steps: Int, progress: (Int) -> Unit): Bitmap {
         require(installed()) { "Import an ONNX model first" }
